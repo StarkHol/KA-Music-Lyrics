@@ -220,7 +220,7 @@ public class MainActivity extends Activity {
         // ===== 关于卡片 =====
         LinearLayout aboutCard = card();
         TextView about = new TextView(this);
-        about.setText("KA-Music歌词  v1.0\n作者 柑橘の洛　·　提供包 com.hoilai.mm.music");
+        about.setText("KA-Music歌词  v1.0.1\n作者 柑橘の洛　·　提供包 com.hoilai.mm.music");
         about.setTextSize(12);
         about.setTextColor(SUB);
         about.setLineSpacing(dp(4), 1f);
