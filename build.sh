@@ -31,6 +31,8 @@ aapt2 compile --dir res -o res.zip
 aapt2 link -o base.apk -I "$ANDROID_JAR" --manifest AndroidManifest.xml \
     --java gen --min-sdk-version 27 --target-sdk-version 30 -A assets res.zip
 
+# 把构建时间写进代码，装上之后看日志就知道跑的是哪一版
+sed -i "s/BUILD_STAMP = \"[^\"]*\"/BUILD_STAMP = \"$(date +%m%d-%H%M)\"/" src/com/ka/music/lyrics/KaCore.java
 echo "[3/6] 编译 Java"
 javac -encoding UTF-8 -source 17 -target 17 -nowarn \
     -cp "$ANDROID_JAR:$XPOSED_JAR:$SDK_DIR/provider-classes.jar:$SDK_DIR/model.jar" \
@@ -62,4 +64,6 @@ zipalign -p -f 4 unsigned.apk aligned.apk
 apksigner sign --ks "$KEYSTORE" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KEY_PASS" \
     --out "$OUT" aligned.apk
 
+# 恢复成占位符，源码里不留构建时间
+sed -i "s/BUILD_STAMP = \"[^\"]*\"/BUILD_STAMP = \"dev\"/" src/com/ka/music/lyrics/KaCore.java
 echo "完成：$OUT"

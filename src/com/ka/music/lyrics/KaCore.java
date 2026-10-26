@@ -25,6 +25,8 @@ import io.github.proify.lyricon.provider.ProviderMetadata;
 public final class KaCore {
 
     public static final String TAG = "KAMLyrics";
+    // 构建脚本会把它替换成打包时间，装上之后看日志就知道跑的是哪一版
+    private static final String BUILD_STAMP = "dev";
     public static final String TARGET_PKG = "com.hoilai.mm.music";
     public static final String SELF_PKG = "com.ka.music.lyrics";
 
@@ -57,6 +59,7 @@ public final class KaCore {
         if (sProvider != null) {
             return;
         }
+        android.util.Log.i(TAG, "build " + BUILD_STAMP);
         final Context app = context.getApplicationContext();
         try {
             String b64 = logoBase64(app);
