@@ -30,11 +30,45 @@ public final class LyricRepo {
     private LyricRepo() {
     }
 
+    private static final java.util.LinkedHashMap<String, Song> CACHE =
+            new java.util.LinkedHashMap<String, Song>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<String, Song> eldest) {
+                    return size() > 32;
+                }
+            };
+
     public static Song fetch(String title, String artist, long duration) {
+        android.util.Log.i("KAMLyrics", "fetch " + title);
+        String key = title + "|" + artist + "|" + duration;
+        synchronized (CACHE) {
+            Song hit = CACHE.get(key);
+            if (hit != null) {
+                android.util.Log.i("KAMLyrics", "cache hit " + title);
+                return hit;
+            }
+        }
         Song song = netease(title, artist, duration);
         if (song == null) {
             android.util.Log.i("KAMLyrics", "netease miss, try kugou");
             song = kugou(title, artist, duration);
+        }
+        if (song == null) {
+            //偶尔会被接口限流，停两秒再整一轮
+            try {
+                Thread.sleep(2000L);
+            } catch (InterruptedException ignored) {
+            }
+            song = netease(title, artist, duration);
+            if (song == null) {
+                song = kugou(title, artist, duration);
+            }
+            android.util.Log.i("KAMLyrics", "retry got=" + (song != null) + " " + title);
+        }
+        if (song != null) {
+            synchronized (CACHE) {
+                CACHE.put(key, song);
+            }
         }
         return song;
     }
@@ -42,14 +76,17 @@ public final class LyricRepo {
     private static Song netease(String title, String artist, long duration) {
         long id = searchId(title, artist, duration);
         if (id <= 0) {
+            android.util.Log.i("KAMLyrics", "netease no id for " + title);
             return null;
         }
         String lrc = fetchLrc(id);
         if (lrc == null || lrc.trim().isEmpty()) {
+            android.util.Log.i("KAMLyrics", "netease no lrc for " + title + " id=" + id);
             return null;
         }
         List<RichLyricLine> lines = parseLrc(lrc, transMap(fetchTrans(id)));
         if (lines.isEmpty()) {
+            android.util.Log.i("KAMLyrics", "netease parse empty for " + title + " id=" + id);
             return null;
         }
         Song song = new Song();
@@ -184,6 +221,26 @@ public final class LyricRepo {
             JSONObject data = new JSONObject(httpGet(url)).optJSONObject("data");
             return data == null ? null : data.optJSONArray("info");
         } catch (Throwable t) {
+            android.util.Log.i("KAMLyrics", "kugou search err " + t);
+            return null;
+        }
+    }
+
+    private static JSONArray searchRaw(String path, String keyword) {
+        try {
+            String url = "https://music.163.com" + path + "?type=1&offset=0&limit=8&s="
+                    + URLEncoder.encode(keyword, "UTF-8");
+            String body = httpGet(url);
+            JSONObject root = new JSONObject(body);
+            JSONObject result = root.optJSONObject("result");
+            if (result == null) {
+                android.util.Log.i("KAMLyrics", "search no result " + path + " body="
+                        + (body.length() > 90 ? body.substring(0, 90) : body));
+                return null;
+            }
+            return result.optJSONArray("songs");
+        } catch (Throwable t) {
+            android.util.Log.i("KAMLyrics", "search err " + path + " " + t);
             return null;
         }
     }
@@ -191,14 +248,15 @@ public final class LyricRepo {
     private static long searchId(String title, String artist, long duration) {
         try {
             String keyword = title + (artist == null || artist.isEmpty() ? "" : " " + artist);
-            String url = "https://music.163.com/api/search/get/web?type=1&offset=0&limit=8&s="
-                    + URLEncoder.encode(keyword, "UTF-8");
-            JSONObject root = new JSONObject(httpGet(url));
-            JSONObject result = root.optJSONObject("result");
-            if (result == null) {
-                return -1;
+            // 连续快速切歌时 /web 这个接口经常返回空，换回不带 /web 的老接口，空了再补一次
+            JSONArray songs = searchRaw("/api/search/get", keyword);
+            if (songs == null || songs.length() == 0) {
+                try {
+                    Thread.sleep(400L);
+                } catch (InterruptedException ignored) {
+                }
+                songs = searchRaw("/api/search/get/web", keyword);
             }
-            JSONArray songs = result.optJSONArray("songs");
             if (songs == null || songs.length() == 0) {
                 return -1;
             }

@@ -46,6 +46,9 @@ public final class KaCore {
     private static MediaMetadata sPendingMetadata;
     private static PlaybackState sPendingState;
     private static boolean sDraining;
+    private static volatile PlaybackState sLastState;
+    private static HandlerThread sBeatThread;
+    private static Handler sBeatHandler;
 
     private KaCore() {
     }
@@ -92,6 +95,27 @@ public final class KaCore {
             sWorker = new HandlerThread("KAMLyrics-io");
             sWorker.start();
             sWorkerHandler = new Handler(sWorker.getLooper());
+
+            // 每秒把最近一次的播放状态再推一遍。HyperLyrics 靠这个算当前进度，断供歌词就不滚了
+            sBeatThread = new HandlerThread("KAMLyrics-beat");
+            sBeatThread.start();
+            sBeatHandler = new Handler(sBeatThread.getLooper());
+            sBeatHandler.post(new Runnable() {
+                @Override
+                public void run() {
+                    PlaybackState st = sLastState;
+                    if (st != null && sProvider != null) {
+                        try {
+                            sProvider.getPlayer().setPlaybackState(st);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    Handler h = sBeatHandler;
+                    if (h != null) {
+                        h.postDelayed(this, 1000L);
+                    }
+                }
+            });
 
             sProvider.setAutoSync(true);
             boolean ok = sProvider.register();
@@ -147,12 +171,19 @@ public final class KaCore {
                     de.robv.android.xposed.XposedBridge.log(TAG + ": push state failed " + t);
                 }
             }
-            if (md != null) {
-                try {
-                    handleMetadata(md);
-                } catch (Throwable t) {
-                    de.robv.android.xposed.XposedBridge.log(TAG + ": metadata failed " + t);
-                }
+            final MediaMetadata meta = md;
+            if (meta != null) {
+                // 搜索和 setSong 都可能慢，扔到另外一条线程，别堵住上面这条播放状态的推送
+                WORK.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            handleMetadata(meta);
+                        } catch (Throwable t) {
+                            de.robv.android.xposed.XposedBridge.log(TAG + ": metadata failed " + t);
+                        }
+                    }
+                });
             }
         }
     };
@@ -228,6 +259,7 @@ public final class KaCore {
         if (sProvider == null || state == null) {
             return;
         }
+        sLastState = state;
         synchronized (LOCK) {
             sPendingState = state;
             kickLocked();
