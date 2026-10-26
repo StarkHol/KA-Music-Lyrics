@@ -1,96 +1,91 @@
-# KA-Music歌词
+# KA-Music 歌词
 
-一个**独立的歌词 Provider 模块**，为第三方音乐客户端 [KA Music](https://github.com/umr-xiaomai/kgka_Music_hl)（包名 `com.hoilai.mm.music`）提供在线歌词，使 **HyperLyrics Enhanced** / Lyricon 生态能显示状态栏歌词与翻译。
+给 KA Music（com.hoilai.mm.music）用的歌词模块。装上之后，HyperLyrics Enhanced 这类走 Lyricon 协议的歌词工具就能读到 KA Music 正在放的歌，在状态栏显示歌词和翻译。
 
-- 不依赖词幕（Lyricon）主模块
-- 不修改任何官方插件，从零编写
-- 只 hook `com.hoilai.mm.music`，不影响其它应用
+只对 KA Music 生效，别的应用不受影响。没有依赖词幕主模块，也不是拿官方插件改的。
 
-## 功能
+## 做了什么
 
-| 功能 | 说明 |
-|---|---|
-| 歌词来源 | 网易云搜索匹配（歌名 + 歌手 + 时长打分），与 KA Music 自身的歌词源一致 |
-| 翻译 | 解析网易云 `tlyric`，填入 `RichLyricLine.translation`，HyperLyrics 会自动显示翻译行 |
-| 注册方式 | Lyricon Provider 协议：`REGISTER_PROVIDER` 广播发往 `com.android.systemui` |
-| 模块识别 | AndroidManifest 中的 `lyricon_module` 系列元数据 |
-| 设置页 | 运行状态检测、一键重新注入、桌面图标开关 |
+- 搜歌走网易云，按歌名、歌手、时长挑最接近的一条，和 KA Music 自己的歌词源保持一致
+- 除了原文还会拉 tlyric 翻译，填进 RichLyricLine 的 translation 字段，HyperLyrics 会自己把翻译行显示出来
+- 注册用 Lyricon 的 REGISTER_PROVIDER 广播，发到 com.android.systemui，因为 HyperLyrics 的歌词运行时在 SystemUI 里
+- manifest 里写了 lyricon_module 这一组元数据，HyperLyrics 扫描已安装应用时才认得出这个模块
+- 设置页有运行状态、一键重新注入、桌面图标开关
 
-## 工作原理
+## 大概的流程
 
 ```
 KA Music (Flutter)
-   │  MediaSession / audio_service
-   ▼
-XposedInit (LSPosed 注入 com.hoilai.mm.music)
-   │  监听 MediaSession.setMetadata / setPlaybackState
-   ▼
-KaCore  ──创建──▶ LyriconProvider（Lyricon SDK）
-   │                 │ register() → REGISTER_PROVIDER 广播
-   │                 ▼
-   │            SystemUI 内的 HyperLyrics 订阅端
-   ▼
-LyricRepo  搜索歌曲 → 拉取 LRC + 翻译 → 构造 RichLyricLine 列表 → pushLyric()
+      │ MediaSession / audio_service
+      ▼
+XposedInit（LSPosed 注入 com.hoilai.mm.music）
+      │ hook setMetadata / setPlaybackState
+      ▼
+KaCore ──创建──▶ LyriconProvider
+      │              │ register()
+      │              ▼
+      │        SystemUI 里的 HyperLyrics 订阅端
+      ▼
+LyricRepo：搜歌 → 拉 LRC 和翻译 → 组装 RichLyricLine → pushLyric()
 ```
 
-## 目录结构
+## 文件
 
 ```
 src/com/ka/music/lyrics/
-├── XposedInit.java    # LSPosed 入口：hook Application / MediaSession
-├── KaCore.java        # Provider 创建与注册、歌词推送
-├── LyricRepo.java     # 网易云搜索、LRC / tlyric 解析
-└── MainActivity.java  # 设置界面（状态、重注入、桌面图标开关）
-res/values/            # 字符串、lyricon_module_tags 数组
-res/mipmap-*/          # 多密度图标
-assets/xposed_init     # 内容：com.ka.music.lyrics.XposedInit
+  XposedInit.java    模块入口，hook Application 和 MediaSession
+  KaCore.java        创建并注册 Provider，推送歌词
+  LyricRepo.java     网易云搜索、LRC 与 tlyric 解析
+  MainActivity.java  设置页
+res/values/          字符串、lyricon_module_tags
+res/mipmap-*/        各密度图标
+assets/xposed_init   里面一行：com.ka.music.lyrics.XposedInit
 AndroidManifest.xml
-build.sh               # 手工构建脚本（aapt2 + javac + D8 + zipalign + apksigner）
+build.sh             构建脚本
 ```
 
 ## 构建
 
-项目不使用 Gradle，直接用 Android SDK 工具链构建，依赖见 `build.sh` 顶部变量：
+没有用 Gradle，直接调 aapt2 / javac / D8 / zipalign / apksigner，依赖路径写在 build.sh 开头，按自己机器改一下。
 
-| 依赖 | 用途 |
-|---|---|
-| `platform-30/android.jar` | 编译目标 |
-| `api-82.jar` | Xposed API |
-| Lyricon `provider-0.1.70.aar`、`model-0.1.70.jar` | Provider 协议 |
-| Kotlin stdlib / kotlinx-serialization / kotlinx-coroutines | Lyricon SDK 运行时 |
-| AndroidX core / core-ktx / appcompat-resources | Lyricon SDK 运行时 |
-| D8（r8.jar） | dex 生成 |
+需要用到的东西：
+
+- platform-30 的 android.jar
+- Xposed API（api-82.jar）
+- Lyricon 的 provider-0.1.70.aar 和 model-0.1.70.jar
+- Kotlin stdlib、kotlinx-serialization、kotlinx-coroutines
+- AndroidX core、core-ktx、appcompat-resources
+- r8.jar 里的 D8
 
 ```bash
-# 准备依赖目录后执行
 ./build.sh
-# 产物：KA_Music_Lyrics.apk
 ```
 
-需要自行生成签名 keystore：
+跑完得到 KA_Music_Lyrics.apk。
+
+签名要自己生成一个 keystore：
 
 ```bash
 keytool -genkeypair -keystore kam.jks -storepass kam12345 -keypass kam12345 \
         -alias kam -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-## 安装与使用
+## 安装
 
-1. 安装 APK，在 **LSPosed** 中启用模块，作用域勾选 **KA Music**
-2. 打开模块设置页，点「重启模块（重新注入）」
-3. 在 **HyperLyrics Enhanced → Lyricon 配置 → 已安装的独立 Provider 模块** 中会出现「KA-Music歌词」
-4. 播放歌曲，状态栏即显示歌词与翻译
+1. 装 APK，在 LSPosed 里启用，作用域勾上 KA Music
+2. 打开模块设置页，点一下重启模块
+3. 到 HyperLyrics Enhanced 的 Lyricon 配置里，已安装的独立 Provider 模块下面会出现 KA-Music歌词
+4. 放歌就行
 
-## 已知限制
+## 目前的问题
 
-- 歌词匹配依赖歌名 / 歌手 / 时长，冷门曲目可能匹配到翻唱版本
-- 网易云接口无登录态，部分歌曲可能无翻译
-- 首次状态检测需要授予 root（用于读取 logcat），未授权时仅显示进程状态
+- 靠歌名歌手时长匹配，冷门歌可能匹到翻唱
+- 网易云接口没登录态，有些歌拿不到翻译
+- 设置页的状态检测要读 logcat，第一次会要 root 权限，不给的话只能看进程在不在
 
-## 致谢
+## 谢谢
 
-- [tomakino/lyricon](https://github.com/tomakino/lyricon) — Provider 协议与 SDK
-- [umr-xiaomai/kgka_Music_hl](https://github.com/umr-xiaomai/kgka_Music_hl) — KA Music
+Lyricon 的协议和 SDK 来自 tomakino/lyricon，播放器是 umr-xiaomai 的 kgka_Music_hl。
 
 ## License
 
