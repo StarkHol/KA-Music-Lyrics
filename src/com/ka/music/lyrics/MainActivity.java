@@ -101,12 +101,18 @@ public class MainActivity extends Activity {
                 new Thread(new Runnable() {
                     @Override
                     public void run() {
-                        execSu("am force-stop " + KA + "; sleep 1; am start -n " + KA + "/.MainActivity");
+                        int code = execSuCode("am force-stop " + KA + "; sleep 1; am start -n " + KA + "/.MainActivity");
                         try {
-                            Thread.sleep(1500);
+                            Thread.sleep(1200);
                         } catch (Throwable ignored) {
                         }
-                        toast("模块已重新注入");
+                        if (code == 0) {
+                            toast("模块已重新注入");
+                        } else if (code < 0) {
+                            toast("重启失败：没拿到 root 权限");
+                        } else {
+                            toast("重启失败，命令退出码 " + code);
+                        }
                         refreshState();
                     }
                 }, "KAMLyrics-reinject").start();
@@ -118,7 +124,18 @@ public class MainActivity extends Activity {
         openKa.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                execSuAsync("am start -n " + KA + "/.MainActivity");
+                // 启动别的应用不用 root，普通 Intent 就够了
+                try {
+                    Intent i = getPackageManager().getLaunchIntentForPackage(KA);
+                    if (i == null) {
+                        toast("没找到 KA MUSIC");
+                        return;
+                    }
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Throwable t) {
+                    toast("打开失败：" + t);
+                }
             }
         });
         root.addView(openKa);
@@ -364,15 +381,6 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    private void execSuAsync(final String cmd) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                execSu(cmd);
-            }
-        }, "KAMLyrics-su").start();
-    }
-
     private String execSu(String cmd) {
         StringBuilder sb = new StringBuilder();
         try {
@@ -388,6 +396,25 @@ public class MainActivity extends Activity {
             sb.append(t.toString());
         }
         return sb.toString().trim();
+    }
+
+    /** 只看这条命令成不成，用来判断有没有拿到 root。 */
+    private int execSuCode(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/su", "-c", cmd});
+            BufferedReader br = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            while (br.readLine() != null) {
+                //输出丢掉，但要读走，不然缓冲满了会卡住
+            }
+            br.close();
+            BufferedReader er = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+            while (er.readLine() != null) {
+            }
+            er.close();
+            return p.waitFor();
+        } catch (Throwable t) {
+            return -1;
+        }
     }
 
     private void toast(final String msg) {
