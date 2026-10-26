@@ -80,6 +80,8 @@ keytool -genkeypair -keystore kam.jks -storepass kam12345 -keypass kam12345 \
 
 ## 安装
 
+懒得自己编的话，可以在 [Releases](https://github.com/StarkHol/KA-Music-Lyrics/releases) 里直接下现成的 APK。自己构建也行，见上一节。
+
 1. 装 APK，在 LSPosed 里启用，作用域勾上 KA Music
 2. 打开模块设置页，点一下重启模块
 3. 到 HyperLyrics Enhanced 的 Lyricon 配置里，已安装的独立 Provider 模块下面会出现 KA-Music歌词
