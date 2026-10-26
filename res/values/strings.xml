@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">KA-Music歌词</string>
+    <string name="hint_title">KA-Music歌词</string>
+    <string name="hint_body">这是一个独立的歌词提供器模块。</string>
+    <string name="hint_steps">使用方法：\n1. 在 LSPosed 中启用本模块\n2. 作用域勾选「KA Music」\n3. 强行停止并重新打开 KA Music\n4. 播放歌曲，HyperLyrics Enhanced 会自动发现本模块</string>
+    <string name="hint_status">运行状态</string>
+    <string name="state_on">已激活：正在为 KA Music 提供歌词</string>
+    <string name="state_off">未激活：请在 LSPosed 中启用并勾选 KA Music</string>
+    <string name="btn_restart_ka">强制重启 KA Music</string>
+    <string name="btn_stop_ka">停止 KA Music</string>
+    <string name="btn_open_ka">打开 KA Music</string>
+    <string name="state_checking">正在检查…</string>
+    <string name="state_injected">已注入，但 Provider 未注册（请重启 KA Music）</string>
+    <string name="state_registered">已激活：Provider 已注册，播放歌曲即可显示歌词</string>
+    <string name="state_lyric_on">已激活：正在提供歌词</string>
+    <string name="btn_open_hyperlyrics">打开 HyperLyrics Enhanced</string>
+</resources>

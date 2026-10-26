@@ -1,0 +1,19 @@
+# 构建产物
+*.apk
+*.dex
+base.apk
+unsigned.apk
+aligned.apk
+dexout/
+gen/
+classes/
+res.zip
+
+# 签名文件
+*.jks
+*.keystore
+
+# 编辑器 / 系统
+.idea/
+*.iml
+.DS_Store
