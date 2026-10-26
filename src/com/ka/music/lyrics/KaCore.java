@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory;
 import android.media.MediaMetadata;
 import android.media.session.PlaybackState;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.Looper;
 import android.util.Base64;
 
@@ -34,7 +35,17 @@ public final class KaCore {
 
     private static LyriconProvider sProvider;
     private static String sLastKey;
-    private static volatile boolean sSearching;
+    private static volatile int sRequestGen;
+    private static final java.util.concurrent.ExecutorService WORK =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    // 所有与 SDK 的交互都放到这个线程，KA Music 自己的线程一律不碰
+    private static HandlerThread sWorker;
+    private static Handler sWorkerHandler;
+    private static final Object LOCK = new Object();
+    private static MediaMetadata sPendingMetadata;
+    private static PlaybackState sPendingState;
+    private static boolean sDraining;
 
     private KaCore() {
     }
@@ -78,6 +89,10 @@ public final class KaCore {
             sProvider = (LyriconProvider) factory.invoke(null, LyriconFactory.INSTANCE, app,
                     SELF_PKG, TARGET_PKG, logo, metadata, null, null, "com.android.systemui", 96, null);
 
+            sWorker = new HandlerThread("KAMLyrics-io");
+            sWorker.start();
+            sWorkerHandler = new Handler(sWorker.getLooper());
+
             sProvider.setAutoSync(true);
             boolean ok = sProvider.register();
             de.robv.android.xposed.XposedBridge.log(TAG + ": provider registered=" + ok);
@@ -99,6 +114,50 @@ public final class KaCore {
         if (sProvider == null || md == null) {
             return;
         }
+        synchronized (LOCK) {
+            sPendingMetadata = md;
+            kickLocked();
+        }
+    }
+
+    private static void kickLocked() {
+        if (sDraining || sWorkerHandler == null) {
+            return;
+        }
+        sDraining = true;
+        sWorkerHandler.post(DRAIN);
+    }
+
+    private static final Runnable DRAIN = new Runnable() {
+        @Override
+        public void run() {
+            MediaMetadata md;
+            PlaybackState st;
+            synchronized (LOCK) {
+                md = sPendingMetadata;
+                st = sPendingState;
+                sPendingMetadata = null;
+                sPendingState = null;
+                sDraining = false;
+            }
+            if (st != null) {
+                try {
+                    sProvider.getPlayer().setPlaybackState(st);
+                } catch (Throwable t) {
+                    de.robv.android.xposed.XposedBridge.log(TAG + ": push state failed " + t);
+                }
+            }
+            if (md != null) {
+                try {
+                    handleMetadata(md);
+                } catch (Throwable t) {
+                    de.robv.android.xposed.XposedBridge.log(TAG + ": metadata failed " + t);
+                }
+            }
+        }
+    };
+
+    private static void handleMetadata(MediaMetadata md) {
         final String title = md.getString(MediaMetadata.METADATA_KEY_TITLE);
         final String artist = md.getString(MediaMetadata.METADATA_KEY_ARTIST);
         final long duration = md.getLong(MediaMetadata.METADATA_KEY_DURATION);
@@ -106,10 +165,11 @@ public final class KaCore {
             return;
         }
         final String key = title + "|" + artist + "|" + duration;
-        if (key.equals(sLastKey) || sSearching) {
+        if (key.equals(sLastKey)) {
             return;
         }
         sLastKey = key;
+        final int gen = ++sRequestGen;
 
         // 先把歌名/歌手推给播放器，界面上可立即显示
         try {
@@ -122,10 +182,13 @@ public final class KaCore {
             de.robv.android.xposed.XposedBridge.log(TAG + ": push stub failed " + t);
         }
 
-        sSearching = true;
-        new Thread(new Runnable() {
+        WORK.execute(new Runnable() {
             @Override
             public void run() {
+                // 前面还有更新的歌时，这次请求直接跳过，省得白跑
+                if (gen != sRequestGen) {
+                    return;
+                }
                 Song song = null;
                 try {
                     song = LyricRepo.fetch(title, artist, duration);
@@ -133,7 +196,11 @@ public final class KaCore {
                     de.robv.android.xposed.XposedBridge.log(TAG + ": lyric fetch failed " + t);
                 }
                 final Song result = song;
-                sSearching = false;
+                // 抓取期间又切歌了，结果作废，别把上一首的歌词塞给当前这首
+                if (gen != sRequestGen) {
+                    de.robv.android.xposed.XposedBridge.log(TAG + ": stale result dropped " + title);
+                    return;
+                }
                 if (result == null) {
                     de.robv.android.xposed.XposedBridge.log(TAG + ": no lyric for " + title);
                     return;
@@ -141,6 +208,9 @@ public final class KaCore {
                 MAIN.post(new Runnable() {
                     @Override
                     public void run() {
+                        if (gen != sRequestGen) {
+                            return;
+                        }
                         try {
                             boolean ok = sProvider.getPlayer().setSong(result);
                             de.robv.android.xposed.XposedBridge.log(TAG + ": lyric pushed=" + ok
@@ -151,17 +221,16 @@ public final class KaCore {
                     }
                 });
             }
-        }, "KAMLyrics-fetch").start();
+        });
     }
 
     public static void onPlaybackState(PlaybackState state) {
         if (sProvider == null || state == null) {
             return;
         }
-        try {
-            sProvider.getPlayer().setPlaybackState(state);
-        } catch (Throwable t) {
-            de.robv.android.xposed.XposedBridge.log(TAG + ": push state failed " + t);
+        synchronized (LOCK) {
+            sPendingState = state;
+            kickLocked();
         }
     }
 }

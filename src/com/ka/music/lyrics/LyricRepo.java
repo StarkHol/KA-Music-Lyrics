@@ -31,6 +31,15 @@ public final class LyricRepo {
     }
 
     public static Song fetch(String title, String artist, long duration) {
+        Song song = netease(title, artist, duration);
+        if (song == null) {
+            android.util.Log.i("KAMLyrics", "netease miss, try kugou");
+            song = kugou(title, artist, duration);
+        }
+        return song;
+    }
+
+    private static Song netease(String title, String artist, long duration) {
         long id = searchId(title, artist, duration);
         if (id <= 0) {
             return null;
@@ -59,8 +68,124 @@ public final class LyricRepo {
                 tc++;
             }
         }
-        android.util.Log.d("KAMLyrics", "trans lines=" + tc + "/" + lines.size());
+        android.util.Log.i("KAMLyrics", "trans lines=" + tc + "/" + lines.size());
         return song;
+    }
+
+    /** 网易云没有的冷门歌、同人曲，拿酷狗兜底。 */
+    private static Song kugou(String title, String artist, long duration) {
+        try {
+            String kw = title + (artist == null || artist.isEmpty() ? "" : " " + artist);
+            JSONArray info = kgSearch(kw);
+            if (info == null || info.length() == 0) {
+                info = kgSearch(title);
+            }
+            if (info == null || info.length() == 0) {
+                android.util.Log.i("KAMLyrics", "kugou miss: no song");
+                return null;
+            }
+            String bestHash = null;
+            long bestAid = 0;
+            int bestScore = -1;
+            for (int i = 0; i < info.length(); i++) {
+                JSONObject s = info.optJSONObject(i);
+                if (s == null) {
+                    continue;
+                }
+                String name = s.optString("songname", "");
+                String singer = s.optString("singername", "");
+                long dur = s.optLong("duration", 0L) * 1000L;
+                int score = 0;
+                if (name.equalsIgnoreCase(title)) {
+                    score += 3;
+                } else if (name.toLowerCase().contains(title.toLowerCase())
+                        || title.toLowerCase().contains(name.toLowerCase())) {
+                    score += 1;
+                }
+                if (artist != null && !artist.isEmpty() && !singer.isEmpty()
+                        && (singer.contains(artist) || artist.contains(singer))) {
+                    score += 3;
+                }
+                if (dur > 0 && duration > 0) {
+                    long diff = Math.abs(dur - duration);
+                    if (diff < 3000) {
+                        score += 2;
+                    } else if (diff < 8000) {
+                        score += 1;
+                    }
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestHash = s.optString("hash", "");
+                    bestAid = s.optLong("album_audio_id", 0L);
+                }
+            }
+            if (bestHash == null || bestHash.isEmpty()) {
+                return null;
+            }
+            String u2 = "https://krcs.kugou.com/search?ver=1&man=yes&client=mobi&keyword=&duration=&hash="
+                    + bestHash + "&album_audio_id=" + bestAid;
+            JSONArray cands = new JSONObject(httpGet(u2)).optJSONArray("candidates");
+            if (cands == null || cands.length() == 0) {
+                return null;
+            }
+            String lid = null;
+            String accesskey = null;
+            long bestDiff = Long.MAX_VALUE;
+            for (int i = 0; i < cands.length(); i++) {
+                JSONObject c = cands.optJSONObject(i);
+                if (c == null) {
+                    continue;
+                }
+                long d = c.optLong("duration", 0L);
+                if (d > 0 && d < 1000L) {
+                    d *= 1000L;
+                }
+                long diff = (duration > 0 && d > 0) ? Math.abs(d - duration) : 0L;
+                if (lid == null || diff < bestDiff) {
+                    bestDiff = diff;
+                    lid = c.optString("id", "");
+                    accesskey = c.optString("accesskey", "");
+                }
+            }
+            if (lid == null || lid.isEmpty()) {
+                return null;
+            }
+            String u3 = "https://lyrics.kugou.com/download?ver=1&client=pc&id=" + lid
+                    + "&accesskey=" + accesskey + "&fmt=lrc&charset=utf8";
+            String content = new JSONObject(httpGet(u3)).optString("content", "");
+            if (content.isEmpty()) {
+                return null;
+            }
+            String lrc = new String(android.util.Base64.decode(content, android.util.Base64.DEFAULT),
+                    StandardCharsets.UTF_8);
+            List<RichLyricLine> lines = parseLrc(lrc, null);
+            if (lines.isEmpty()) {
+                return null;
+            }
+            Song song = new Song();
+            song.setId("kg:" + lid);
+            song.setName(title);
+            song.setArtist(artist);
+            song.setDuration(duration > 0 ? duration : lines.get(lines.size() - 1).getEnd());
+            song.setLyrics(lines);
+            android.util.Log.i("KAMLyrics", "kugou hit lines=" + lines.size());
+            return song;
+        } catch (Throwable t) {
+            android.util.Log.i("KAMLyrics", "kugou failed " + t);
+            return null;
+        }
+    }
+
+    private static JSONArray kgSearch(String keyword) {
+        try {
+            String url = "https://mobilecdn.kugou.com/api/v3/search/song?format=json&page=1&pagesize=8&keyword="
+                    + URLEncoder.encode(keyword, "UTF-8");
+            JSONObject data = new JSONObject(httpGet(url)).optJSONObject("data");
+            return data == null ? null : data.optJSONArray("info");
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private static long searchId(String title, String artist, long duration) {
@@ -257,6 +382,39 @@ public final class LyricRepo {
         return out;
     }
 
+    private static javax.net.ssl.SSLSocketFactory sTrustAll;
+
+    private static javax.net.ssl.SSLSocketFactory trustAll() {
+        if (sTrustAll != null) {
+            return sTrustAll;
+        }
+        try {
+            javax.net.ssl.TrustManager[] tm = new javax.net.ssl.TrustManager[]{
+                    new javax.net.ssl.X509TrustManager() {
+                        @Override
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[0];
+                        }
+
+                        @Override
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] chain,
+                                                       String authType) {
+                        }
+
+                        @Override
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] chain,
+                                                       String authType) {
+                        }
+                    }
+            };
+            javax.net.ssl.SSLContext ctx = javax.net.ssl.SSLContext.getInstance("TLS");
+            ctx.init(null, tm, new java.security.SecureRandom());
+            sTrustAll = ctx.getSocketFactory();
+        } catch (Throwable ignored) {
+        }
+        return sTrustAll;
+    }
+
     private static String httpGet(String url) throws Exception {
         HttpURLConnection conn = null;
         try {
@@ -264,6 +422,19 @@ public final class LyricRepo {
             conn.setConnectTimeout(8000);
             conn.setReadTimeout(8000);
             conn.setRequestMethod("GET");
+            if (conn instanceof javax.net.ssl.HttpsURLConnection) {
+                javax.net.ssl.HttpsURLConnection https = (javax.net.ssl.HttpsURLConnection) conn;
+                javax.net.ssl.SSLSocketFactory f = trustAll();
+                if (f != null) {
+                    https.setSSLSocketFactory(f);
+                }
+                https.setHostnameVerifier(new javax.net.ssl.HostnameVerifier() {
+                    @Override
+                    public boolean verify(String host, javax.net.ssl.SSLSession session) {
+                        return true;
+                    }
+                });
+            }
             conn.setRequestProperty("User-Agent",
                     "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36");
             conn.setRequestProperty("Referer", "https://music.163.com/");

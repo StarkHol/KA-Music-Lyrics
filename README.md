@@ -87,6 +87,14 @@ keytool -genkeypair -keystore kam.jks -storepass kam12345 -keypass kam12345 \
 3. 到 HyperLyrics Enhanced 的 Lyricon 配置里，已安装的独立 Provider 模块下面会出现 KA-Music歌词
 4. 放歌就行
 
+## 更新记录
+
+2026-10
+
+- 取歌词不再占用 KA Music 自己的线程，切歌和播放不会再被拖住
+- 快速连切时，上一首的歌词抓回来直接丢掉，不会串到当前这首上
+- 网易云搜不到的歌改用酷狗兜底，同人曲和冷门歌也能出词了
+
 ## 目前的问题
 
 - 靠歌名歌手时长匹配，冷门歌可能匹到翻唱
