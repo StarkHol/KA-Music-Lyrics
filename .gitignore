@@ -17,3 +17,4 @@ res.zip
 .idea/
 *.iml
 .DS_Store
+*.idsig
